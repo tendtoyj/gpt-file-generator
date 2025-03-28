@@ -87,7 +87,24 @@ def generate_txt():
 def download_file(filename):
     try:
         logger.info('Download requested for file: %s', filename)
-        return send_from_directory('files', filename, as_attachment=True)
+        # 파일 경로 확인
+        file_path = os.path.join('files', filename)
+        if not os.path.exists(file_path):
+            logger.error('File not found: %s', file_path)
+            return jsonify({'error': 'File not found'}), 404
+            
+        # 파일 내용 읽기
+        with open(file_path, 'r', encoding='utf-8') as f:
+            file_content = f.read()
+            
+        # 응답 생성
+        response = app.response_class(
+            response=file_content,
+            status=200,
+            mimetype='text/plain'
+        )
+        response.headers.set('Content-Disposition', f'attachment; filename={filename}')
+        return response
     except Exception as e:
         logger.error('Error in download_file: %s', str(e))
         logger.error('Traceback: %s', traceback.format_exc())
