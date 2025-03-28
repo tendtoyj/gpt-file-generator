@@ -4,6 +4,13 @@ from datetime import datetime
 
 app = Flask(__name__)
 
+@app.route('/', methods=['GET'])
+def index():
+    return jsonify({
+        "status": "running",
+        "message": "Text File Generator API is running. Use /generate-txt endpoint for file generation."
+    })
+
 @app.route('/generate-txt', methods=['POST'])
 def generate_txt():
     data = request.get_json()
