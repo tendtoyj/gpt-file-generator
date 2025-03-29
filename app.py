@@ -4,6 +4,7 @@ import logging
 import traceback
 from datetime import datetime
 import io
+from urllib.parse import quote, unquote
 
 # 로깅 설정
 logging.basicConfig(
@@ -15,7 +16,6 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
-
 app = Flask(__name__)
 
 # 모든 요청에 대한 로깅 미들웨어
@@ -55,6 +55,11 @@ def generate_txt():
             filename += '.txt'
         logger.info(f'Generating file: {filename}')
         
+        # 콘텐츠 크기 제한 추가 (예: 10MB)
+        if len(content) > 10 * 1024 * 1024:
+            logger.warning('Content size exceeds limit')
+            return jsonify({'error': 'Content size exceeds the limit (10MB)'}), 400
+        
         # Create directory for files if it doesn't exist
         os.makedirs('files', exist_ok=True)
         
@@ -64,9 +69,10 @@ def generate_txt():
             f.write(content)
         logger.info(f'File written successfully: {filepath}')
         
-        # 항상 HTTPS URL 생성
+        # 항상 HTTPS URL 생성 (URL 인코딩 적용)
         host = request.headers.get('Host', 'gpt-file-api.onrender.com')
-        download_url = f"https://{host}/download/{filename}"
+        encoded_filename = quote(filename)
+        download_url = f"https://{host}/download/{encoded_filename}"
         logger.info(f'Generated download URL: {download_url}')
         
         return jsonify({
@@ -80,26 +86,33 @@ def generate_txt():
 @app.route('/download/<filename>', methods=['GET'])
 def download_file(filename):
     try:
-        logger.info(f'Download requested for file: {filename}')
-        file_path = os.path.join('files', filename)
+        logger.info(f'Download requested for encoded file: {filename}')
+        
+        # 경로 탐색 방지
+        if os.path.sep in filename or '..' in filename:
+            logger.error(f'Invalid filename: {filename}')
+            return jsonify({'error': 'Invalid filename'}), 400
+            
+        # URL 디코딩
+        decoded_filename = unquote(filename)
+        logger.info(f'Decoded filename: {decoded_filename}')
+        
+        file_path = os.path.join('files', decoded_filename)
         
         if not os.path.exists(file_path):
             logger.error(f'File not found: {file_path}')
             return jsonify({'error': 'File not found'}), 404
         
-        # 파일 내용 읽기
-        with open(file_path, 'r', encoding='utf-8') as f:
-            file_content = f.read()
-        
-        # 메모리 버퍼로 파일 내용 전송
-        buffer = io.BytesIO(file_content.encode('utf-8'))
+        # 바이너리 모드로 파일 읽기
+        with open(file_path, 'rb') as f:
+            buffer = io.BytesIO(f.read())
         buffer.seek(0)
         
         # 파일 다운로드로 전송
         return send_file(
             buffer,
             as_attachment=True,
-            download_name=filename,
+            download_name=decoded_filename,
             mimetype='text/plain'
         )
     except Exception as e:
@@ -117,6 +130,23 @@ def not_found(e):
 def server_error(e):
     logger.error(f'500 error: {str(e)}')
     return jsonify({"error": "Server error", "details": str(e)}), 500
+
+# 임시 파일 정리 함수 (필요에 따라 주기적으로 호출)
+def cleanup_old_files(max_age_hours=24):
+    files_dir = 'files'
+    if not os.path.exists(files_dir):
+        return
+    
+    current_time = datetime.now()
+    for filename in os.listdir(files_dir):
+        file_path = os.path.join(files_dir, filename)
+        file_modified = datetime.fromtimestamp(os.path.getmtime(file_path))
+        if (current_time - file_modified).total_seconds() > max_age_hours * 3600:
+            try:
+                os.remove(file_path)
+                logger.info(f'Removed old file: {file_path}')
+            except Exception as e:
+                logger.error(f'Failed to remove file {file_path}: {str(e)}')
 
 if __name__ == '__main__':
     logger.info('Starting server on port 10000')
